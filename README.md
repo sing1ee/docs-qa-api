@@ -36,6 +36,7 @@ pnpm install
 | `LLM_PROVIDER` | 否 | `gemini`（默认）或 `openrouter` |
 | `LLM_MODEL` | 否 | 模型名；Gemini 默认 `gemini-3.1-flash-lite-preview`，OpenRouter 默认 `google/gemini-3.1-flash-lite-preview` |
 | `PORT` | 否 | 服务端口，默认 `3000` |
+| `API_KEY` | 否 | 若设置，则所有 API 请求需携带 `Authorization: Bearer <API_KEY>` |
 
 ### 配置示例
 
@@ -145,6 +146,7 @@ SSE 流式返回回答。
 ```bash
 curl -N -X POST http://localhost:4000/api/ask \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer your_api_key' \
   -d '{"question": "Openclaw 的 gateway 如何配置语义搜索呢"}'
 ```
 

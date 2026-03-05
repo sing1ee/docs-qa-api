@@ -19,7 +19,25 @@ console.log(`Index built (${index.length} chars)`);
 const provider = createProvider();
 const app = new Hono();
 
-app.post("/api/ask", async (c) => {
+// 简单 Bearer 认证，中间件复用
+function requireBearerAuth(c: any, next: any) {
+  const expected = process.env.API_KEY;
+  // 未配置 API_KEY 时不启用鉴权，便于本地开发
+  if (!expected) return next();
+
+  const auth = c.req.header("authorization") ?? "";
+  const prefix = "Bearer ";
+  if (!auth.startsWith(prefix)) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  const token = auth.slice(prefix.length).trim();
+  if (token !== expected) {
+    return c.json({ error: "unauthorized" }, 401);
+  }
+  return next();
+}
+
+app.post("/api/ask", requireBearerAuth, async (c) => {
   const body = await c.req.json<{ question: string }>();
   if (!body.question) {
     return c.json({ error: "question is required" }, 400);
