@@ -19,6 +19,30 @@ console.log(`Index built (${index.length} chars)`);
 const provider = createProvider();
 const app = new Hono();
 
+// 简单请求日志中间件：记录方法、路径、IP、耗时
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  const method = c.req.method;
+  const path = c.req.path;
+  const ip =
+    c.req.header("x-forwarded-for") ??
+    c.req.header("x-real-ip") ??
+    "unknown";
+
+  console.log(`[request] ${method} ${path} from ${ip}`);
+
+  try {
+    await next();
+  } catch (e) {
+    console.error(`[error] ${method} ${path}`, e);
+    throw e;
+  } finally {
+    const ms = Date.now() - start;
+    const status = c.res?.status ?? 0;
+    console.log(`[response] ${method} ${path} ${status} ${ms}ms`);
+  }
+});
+
 // 简单 Bearer 认证，中间件复用
 function requireBearerAuth(c: any, next: any) {
   const expected = process.env.API_KEY;
@@ -42,6 +66,15 @@ app.post("/api/ask", requireBearerAuth, async (c) => {
   if (!body.question) {
     return c.json({ error: "question is required" }, 400);
   }
+
+  console.log(
+    `[ask] question: ${body.question.slice(0, 200)}${
+      body.question.length > 200 ? "..." : ""
+    }`
+  );
+
+  // Nginx 反代时必须禁用响应缓冲，否则 SSE 流会被吞
+  c.header("X-Accel-Buffering", "no");
 
   return streamSSE(c, async (stream) => {
     for await (const event of runAgent(body.question, index, projectDir, provider)) {
