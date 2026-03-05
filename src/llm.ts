@@ -25,11 +25,31 @@ export type StreamEvent =
   | { type: "tool_calls"; calls: ToolCall[]; thoughtSignatures?: string[] }
   | { type: "done" };
 
+/** 单轮发送内容：用户文本 或 多条 tool 的 functionResponse parts */
+export type SendInput = string | Array<{ name: string; result: string }>;
+
+/** 会话：按轮发送，由 SDK 管理 history（Gemini 含 thought_signature） */
+export interface StreamSession {
+  sendAndStream(input: SendInput): AsyncGenerator<StreamEvent>;
+}
+
 export interface LLMProvider {
   stream(messages: Message[]): AsyncGenerator<StreamEvent>;
+  /** 创建会话（Gemini 用 Chat API 自动管理 thought_signature；未实现则用 stream） */
+  createSession?(systemPrompt: string): StreamSession;
 }
 
 // --- Gemini Provider ---
+
+const geminiTools = [
+  {
+    functionDeclarations: toolDefinitions.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters as any,
+    })),
+  },
+];
 
 export class GeminiProvider implements LLMProvider {
   private ai: GoogleGenAI;
@@ -40,115 +60,79 @@ export class GeminiProvider implements LLMProvider {
     this.model = model;
   }
 
-  async *stream(messages: Message[]): AsyncGenerator<StreamEvent> {
-    const { systemInstruction, contents } = this.convertMessages(messages);
-
-    const response = await this.ai.models.generateContentStream({
+  createSession(systemPrompt: string): StreamSession {
+    const chat = this.ai.chats.create({
       model: this.model,
-      contents,
       config: {
-        systemInstruction,
-        tools: [
-          {
-            functionDeclarations: toolDefinitions.map((t) => ({
-              name: t.name,
-              description: t.description,
-              parameters: t.parameters as any,
-            })),
-          },
-        ],
+        systemInstruction: systemPrompt,
+        tools: geminiTools,
       },
     });
 
-    const toolCalls: ToolCall[] = [];
-    const thoughtSignatures: string[] = [];
-    let callIndex = 0;
+    return {
+      async *sendAndStream(input: SendInput): AsyncGenerator<StreamEvent> {
+        const message =
+          typeof input === "string"
+            ? input
+            : input.map((r) => ({ functionResponse: { name: r.name, response: { result: r.result } } }));
 
-    for await (const chunk of response) {
-      if (!chunk.candidates?.[0]?.content?.parts) continue;
+        const response = await chat.sendMessageStream({ message: message as any });
 
-      for (const part of chunk.candidates[0].content.parts) {
-        if (part.text) {
-          yield { type: "text_delta", content: part.text };
-        }
-        if (part.functionCall) {
-          toolCalls.push({
-            id: `call_${callIndex++}`,
-            name: part.functionCall.name!,
-            arguments: (part.functionCall.args as Record<string, unknown>) ?? {},
-          });
-        }
-        const sig = part.thoughtSignature ?? (part as { thought_signature?: string }).thought_signature;
-        if (sig) thoughtSignatures.push(sig);
-      }
-    }
+        const toolCalls: ToolCall[] = [];
+        let callIndex = 0;
 
-    // 流式响应有时不包含 thoughtSignature，Gemini 3 多轮又必须回传 → 无则用同请求拉一次完整响应
-    if (toolCalls.length > 0 && thoughtSignatures.length === 0) {
-      const full = await this.ai.models.generateContent({
-        model: this.model,
-        contents,
-        config: {
-          systemInstruction,
-          tools: [{ functionDeclarations: toolDefinitions.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters as any })) }],
-        },
-      });
-      const parts = full.candidates?.[0]?.content?.parts ?? [];
-      for (const part of parts) {
-        const sig = part.thoughtSignature ?? (part as { thought_signature?: string }).thought_signature;
-        if (sig) thoughtSignatures.push(sig);
-      }
-    }
+        for await (const chunk of response) {
+          if (!chunk.candidates?.[0]?.content?.parts) continue;
 
-    if (toolCalls.length > 0) {
-      yield { type: "tool_calls", calls: toolCalls, thoughtSignatures: thoughtSignatures.length > 0 ? thoughtSignatures : undefined };
-    }
-
-    yield { type: "done" };
-  }
-
-  private convertMessages(messages: Message[]) {
-    let systemInstruction: string | undefined;
-    const contents: any[] = [];
-
-    for (const msg of messages) {
-      if (msg.role === "system") {
-        systemInstruction = msg.content;
-        continue;
-      }
-
-      if (msg.role === "user") {
-        contents.push({ role: "user", parts: [{ text: msg.content }] });
-      } else if (msg.role === "assistant") {
-        const parts: any[] = [];
-        if (msg.content) parts.push({ text: msg.content });
-        const sigs = msg.thoughtSignatures;
-        if (msg.tool_calls) {
-          for (let i = 0; i < msg.tool_calls.length; i++) {
-            const tc = msg.tool_calls[i];
-            parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
-            // Gemini 3 要求每个 functionCall 后带 thought_signature
-            const sig = sigs && (sigs[i] ?? sigs[0]);
-            if (sig) parts.push({ thoughtSignature: sig });
+          for (const part of chunk.candidates[0].content.parts) {
+            if (part.text) {
+              yield { type: "text_delta", content: part.text };
+            }
+            if (part.functionCall) {
+              toolCalls.push({
+                id: `call_${callIndex++}`,
+                name: part.functionCall.name!,
+                arguments: (part.functionCall.args as Record<string, unknown>) ?? {},
+              });
+            }
           }
         }
-        contents.push({ role: "model", parts });
-      } else if (msg.role === "tool") {
-        contents.push({
-          role: "user",
-          parts: [
-            {
-              functionResponse: {
-                name: msg.name,
-                response: { result: msg.content },
-              },
-            },
-          ],
-        });
-      }
-    }
 
-    return { systemInstruction, contents };
+        if (toolCalls.length > 0) {
+          yield { type: "tool_calls", calls: toolCalls };
+        }
+        yield { type: "done" };
+      },
+    };
+  }
+
+  async *stream(messages: Message[]): AsyncGenerator<StreamEvent> {
+    // 无会话时仅支持单轮（首条用户消息）；多轮请由 agent 使用 createSession
+    const toSend = this.getSendInput(messages);
+    if (toSend === null) {
+      yield { type: "done" };
+      return;
+    }
+    const session = this.createSession(messages.find((m) => m.role === "system")?.content ?? "");
+    yield* session.sendAndStream(toSend);
+  }
+
+  /** 从 messages 解析本轮要发送的内容：仅 [system, user] 或 末尾为 tool 时 */
+  private getSendInput(messages: Message[]): SendInput | null {
+    if (messages.length === 2 && messages[1].role === "user") {
+      return messages[1].content ?? "";
+    }
+    const toolMessages = this.getLastToolMessages(messages);
+    if (toolMessages.length > 0) {
+      return toolMessages.map((m) => ({ name: m.name!, result: m.content ?? "" }));
+    }
+    return null;
+  }
+
+  private getLastToolMessages(messages: Message[]): Message[] {
+    let i = messages.length - 1;
+    while (i >= 0 && messages[i].role === "tool") i--;
+    return messages.slice(i + 1);
   }
 }
 

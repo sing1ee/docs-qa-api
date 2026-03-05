@@ -143,7 +143,7 @@ SSE 流式返回回答。
 **示例：**
 
 ```bash
-curl -N -X POST http://localhost:3000/api/ask \
+curl -N -X POST http://localhost:4000/api/ask \
   -H 'Content-Type: application/json' \
   -d '{"question": "Openclaw 的 gateway 如何配置语义搜索呢"}'
 ```

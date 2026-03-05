@@ -10,6 +10,11 @@ export type SSEEvent =
 
 const MAX_TOOL_ROUNDS = 10;
 
+/** 有 createSession 时用会话流（Gemini Chat API 自动管理 thought_signature） */
+function useSessionFlow(provider: LLMProvider): boolean {
+  return typeof provider.createSession === "function";
+}
+
 const SYSTEM_PROMPT = `你是一个代码库问答助手。
 
 <project-index>
@@ -39,6 +44,12 @@ export async function* runAgent(
   provider: LLMProvider
 ): AsyncGenerator<SSEEvent> {
   const systemPrompt = SYSTEM_PROMPT.replace("{INDEX}", index);
+
+  if (useSessionFlow(provider)) {
+    yield* runWithSession(provider, systemPrompt, question, projectDir);
+    return;
+  }
+
   const messages: Message[] = [
     { role: "system", content: systemPrompt },
     { role: "user", content: question },
@@ -55,33 +66,18 @@ export async function* runAgent(
           yield { type: "delta", content: event.content };
         } else if (event.type === "tool_calls") {
           hasToolCalls = true;
-
-          // Add assistant message with tool calls（Gemini 3 多轮需带 thoughtSignatures）
           messages.push({
             role: "assistant",
             content: textContent || undefined,
             tool_calls: event.calls,
             thoughtSignatures: event.thoughtSignatures,
           });
-
-          // Execute each tool and send results
           for (const call of event.calls) {
             yield { type: "tool_call", name: call.name, args: call.arguments };
-
             const result = executeTool(projectDir, call.name, call.arguments);
-            const preview =
-              result.length > 200
-                ? result.slice(0, 200) + "..."
-                : result;
-
+            const preview = result.length > 200 ? result.slice(0, 200) + "..." : result;
             yield { type: "tool_result", name: call.name, preview };
-
-            messages.push({
-              role: "tool",
-              content: result,
-              tool_call_id: call.id,
-              name: call.name,
-            });
+            messages.push({ role: "tool", content: result, tool_call_id: call.id, name: call.name });
           }
         }
       }
@@ -89,11 +85,46 @@ export async function* runAgent(
       yield { type: "error", message: e.message };
       return;
     }
+    if (!hasToolCalls) break;
+  }
 
-    // If no tool calls, the agent is done answering
-    if (!hasToolCalls) {
-      break;
+  yield { type: "done" };
+}
+
+async function* runWithSession(
+  provider: LLMProvider,
+  systemPrompt: string,
+  question: string,
+  projectDir: string
+): AsyncGenerator<SSEEvent> {
+  const session = provider.createSession!(systemPrompt);
+  let nextInput: string | Array<{ name: string; result: string }> = question;
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    let hasToolCalls = false;
+
+    try {
+      for await (const event of session.sendAndStream(nextInput)) {
+        if (event.type === "text_delta") {
+          yield { type: "delta", content: event.content };
+        } else if (event.type === "tool_calls") {
+          hasToolCalls = true;
+          const results: Array<{ name: string; result: string }> = [];
+          for (const call of event.calls) {
+            yield { type: "tool_call", name: call.name, args: call.arguments };
+            const result = executeTool(projectDir, call.name, call.arguments);
+            const preview = result.length > 200 ? result.slice(0, 200) + "..." : result;
+            yield { type: "tool_result", name: call.name, preview };
+            results.push({ name: call.name, result });
+          }
+          nextInput = results;
+        }
+      }
+    } catch (e: any) {
+      yield { type: "error", message: e.message };
+      return;
     }
+    if (!hasToolCalls) break;
   }
 
   yield { type: "done" };
