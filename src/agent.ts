@@ -56,11 +56,12 @@ export async function* runAgent(
         } else if (event.type === "tool_calls") {
           hasToolCalls = true;
 
-          // Add assistant message with tool calls
+          // Add assistant message with tool calls（Gemini 3 多轮需带 thoughtSignatures）
           messages.push({
             role: "assistant",
             content: textContent || undefined,
             tool_calls: event.calls,
+            thoughtSignatures: event.thoughtSignatures,
           });
 
           // Execute each tool and send results

@@ -145,7 +145,7 @@ SSE 流式返回回答。
 ```bash
 curl -N -X POST http://localhost:3000/api/ask \
   -H 'Content-Type: application/json' \
-  -d '{"question": "项目的入口文件在哪？"}'
+  -d '{"question": "Openclaw 的 gateway 如何配置语义搜索呢"}'
 ```
 
 ### GET /health

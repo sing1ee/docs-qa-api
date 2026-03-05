@@ -8,6 +8,8 @@ export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content?: string;
   tool_calls?: ToolCall[];
+  /** Gemini 多轮 tool call 时必带，与 tool_calls 一一对应或仅一个用于整轮 */
+  thoughtSignatures?: string[];
   tool_call_id?: string;
   name?: string;
 }
@@ -20,7 +22,7 @@ export interface ToolCall {
 
 export type StreamEvent =
   | { type: "text_delta"; content: string }
-  | { type: "tool_calls"; calls: ToolCall[] }
+  | { type: "tool_calls"; calls: ToolCall[]; thoughtSignatures?: string[] }
   | { type: "done" };
 
 export interface LLMProvider {
@@ -59,6 +61,7 @@ export class GeminiProvider implements LLMProvider {
     });
 
     const toolCalls: ToolCall[] = [];
+    const thoughtSignatures: string[] = [];
     let callIndex = 0;
 
     for await (const chunk of response) {
@@ -75,11 +78,30 @@ export class GeminiProvider implements LLMProvider {
             arguments: (part.functionCall.args as Record<string, unknown>) ?? {},
           });
         }
+        const sig = part.thoughtSignature ?? (part as { thought_signature?: string }).thought_signature;
+        if (sig) thoughtSignatures.push(sig);
+      }
+    }
+
+    // 流式响应有时不包含 thoughtSignature，Gemini 3 多轮又必须回传 → 无则用同请求拉一次完整响应
+    if (toolCalls.length > 0 && thoughtSignatures.length === 0) {
+      const full = await this.ai.models.generateContent({
+        model: this.model,
+        contents,
+        config: {
+          systemInstruction,
+          tools: [{ functionDeclarations: toolDefinitions.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters as any })) }],
+        },
+      });
+      const parts = full.candidates?.[0]?.content?.parts ?? [];
+      for (const part of parts) {
+        const sig = part.thoughtSignature ?? (part as { thought_signature?: string }).thought_signature;
+        if (sig) thoughtSignatures.push(sig);
       }
     }
 
     if (toolCalls.length > 0) {
-      yield { type: "tool_calls", calls: toolCalls };
+      yield { type: "tool_calls", calls: toolCalls, thoughtSignatures: thoughtSignatures.length > 0 ? thoughtSignatures : undefined };
     }
 
     yield { type: "done" };
@@ -100,11 +122,14 @@ export class GeminiProvider implements LLMProvider {
       } else if (msg.role === "assistant") {
         const parts: any[] = [];
         if (msg.content) parts.push({ text: msg.content });
+        const sigs = msg.thoughtSignatures;
         if (msg.tool_calls) {
-          for (const tc of msg.tool_calls) {
-            parts.push({
-              functionCall: { name: tc.name, args: tc.arguments },
-            });
+          for (let i = 0; i < msg.tool_calls.length; i++) {
+            const tc = msg.tool_calls[i];
+            parts.push({ functionCall: { name: tc.name, args: tc.arguments } });
+            // Gemini 3 要求每个 functionCall 后带 thought_signature
+            const sig = sigs && (sigs[i] ?? sigs[0]);
+            if (sig) parts.push({ thoughtSignature: sig });
           }
         }
         contents.push({ role: "model", parts });
