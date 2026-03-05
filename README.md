@@ -149,7 +149,7 @@ curl -N -X POST http://localhost:4000/api/ask \
   -H 'Authorization: Bearer your_api_key' \
   -d '{"question": "Openclaw 的 gateway 如何配置语义搜索呢"}'
 
-curl -N -X POST http://api.openclaw.com/api/ask \
+curl -N --noproxy '*' -X POST https://api.openclawagent.net/api/ask \
   -H 'Content-Type: application/json' \
   -H 'Authorization: Bearer your_api_key' \
   -d '{"question": "Openclaw 的 gateway 如何配置语义搜索呢"}'
