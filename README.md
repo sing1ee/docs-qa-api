@@ -1,155 +1,146 @@
-# docs-qa-api
+# docs-qa-agent
 
-LLM-powered Q&A API for your codebase.  
-On startup the server builds an index of your project (directory tree, exported TS/JS symbols, markdown summaries), then uses multi-turn tool calling to search code and docs and streams answers over SSE.
+LLM-powered Q&A agent for your codebase.
+Index your project and ask questions — via interactive CLI, terminal chat, or HTTP API with SSE streaming.
+
+---
+
+## Quick Start
+
+```bash
+npx docs-qa-agent
+```
+
+The interactive wizard will guide you through configuration (LLM provider, API key, project directory, etc.) and save settings to `.env`.
+
+### Other modes
+
+```bash
+npx docs-qa-agent --chat       # Interactive chat in terminal (no HTTP server)
+npx docs-qa-agent --serve      # Start HTTP server directly (uses existing .env)
+npx docs-qa-agent --config     # Run configuration wizard only
+npx docs-qa-agent --help       # Show help
+```
 
 ---
 
 ## Requirements
 
-- **Node.js** 18+ (20+ recommended)  
-- A readable project directory to index (`DOCS_DIR`)  
+- **Node.js** 18+ (20+ recommended)
+- A readable project directory to index
 - Either a **Gemini API key** or an **OpenRouter API key**
 
 ## Installation
 
+### Use directly with npx (recommended)
+
 ```bash
-git clone <repo-url>
+npx docs-qa-agent
+```
+
+### Or install globally
+
+```bash
+npm install -g docs-qa-agent
+docs-qa-agent
+```
+
+### Or clone for development
+
+```bash
+git clone https://github.com/sing1ee/docs-qa-api.git
 cd docs-qa-api
-pnpm install
+npm install
+npm run cli
 ```
 
 ## Configuration
 
-The server is configured via environment variables.  
-On startup it automatically loads a `.env` file from the project root (if present); values passed on the command line override `.env`.
+All settings can be configured interactively via the TUI wizard, or manually via environment variables / `.env` file.
 
 ### Environment variables
 
-| Variable             | Required | Description                                                                                             |
-|----------------------|----------|---------------------------------------------------------------------------------------------------------|
-| `DOCS_DIR`           | **Yes**  | Root directory of the codebase to index (absolute or relative path)                                    |
-| `GEMINI_API_KEY`     | Gemini   | API key from [Google AI Studio](https://aistudio.google.com/apikey)                                    |
-| `OPENROUTER_API_KEY` | OpenRouter | API key from [OpenRouter](https://openrouter.ai/keys)                                               |
-| `LLM_PROVIDER`       | No       | `gemini` (default) or `openrouter`                                                                     |
-| `LLM_MODEL`          | No       | Model name; Gemini default `gemini-3.1-flash-lite-preview`, OpenRouter default `google/gemini-3.1-flash-lite-preview` |
-| `PORT`               | No       | HTTP port, default `3000`                                                                              |
-| `API_KEY`            | No       | If set, all API calls must send `Authorization: Bearer <API_KEY>`                                      |
+| Variable             | Required   | Description                                                                 |
+|----------------------|------------|-----------------------------------------------------------------------------|
+| `DOCS_DIR`           | **Yes**    | Root directory of the codebase to index                                     |
+| `GEMINI_API_KEY`     | Gemini     | API key from [Google AI Studio](https://aistudio.google.com/apikey)         |
+| `OPENROUTER_API_KEY` | OpenRouter | API key from [OpenRouter](https://openrouter.ai/keys)                       |
+| `LLM_PROVIDER`       | No         | `gemini` (default) or `openrouter`                                          |
+| `LLM_MODEL`          | No         | Model name (defaults vary by provider)                                      |
+| `PORT`               | No         | HTTP port, default `3000`                                                   |
+| `API_KEY`            | No         | If set, all API calls require `Authorization: Bearer <API_KEY>`             |
 
-### Configuration examples
-
-Option 1 – environment variables:
-
-```bash
-export DOCS_DIR=/path/to/your/project
-export GEMINI_API_KEY=your_gemini_key
-pnpm run dev
-```
-
-Option 2 – `.env` file (recommended, do not commit to git):
+### Example `.env` file
 
 ```env
-# Required: codebase root
 DOCS_DIR=/path/to/your/project
-
-# Gemini (one of)
 GEMINI_API_KEY=your_gemini_key
-
-# Or OpenRouter
-# LLM_PROVIDER=openrouter
-# OPENROUTER_API_KEY=your_openrouter_key
-# LLM_MODEL=google/gemini-3.1-flash-lite-preview
-
-# Optional
+LLM_MODEL=gemini-2.5-flash
 PORT=3000
-LLM_MODEL=gemini-3.1-flash-lite-preview
 ```
 
-## Running
+---
+
+## Usage
+
+### Interactive Chat (recommended for exploration)
 
 ```bash
-# Using Gemini (default)
-DOCS_DIR=/path/to/your/project GEMINI_API_KEY=xxx pnpm run dev
-
-# Using OpenRouter
-DOCS_DIR=/path/to/your/project \
-  LLM_PROVIDER=openrouter \
-  OPENROUTER_API_KEY=xxx \
-  LLM_MODEL=google/gemini-3.1-flash-lite-preview \
-  pnpm run dev
+npx docs-qa-agent --chat
 ```
 
-Or run the TypeScript entry directly with `tsx`:
+Ask questions directly in your terminal with streaming answers and tool call visualization:
+
+```
+❯ How is authentication implemented?
+
+  ◆ grep({"pattern": "auth", "path": "src/"})
+  ↳ src/server.ts:47: function requireBearerAuth...
+
+The authentication is implemented via a Bearer token middleware...
+```
+
+Type `.exit` or press `Ctrl+C` to quit.
+
+### HTTP Server
 
 ```bash
-DOCS_DIR=/path/to/your/project GEMINI_API_KEY=xxx pnpm exec tsx src/server.ts
+npx docs-qa-agent --serve
 ```
 
-On startup the server will:
+Starts the HTTP API server. On startup it will:
 
-1. Scan `DOCS_DIR` and build an index (directory tree + exported TS/JS symbols + markdown summaries)  
-2. Log index statistics and start listening on the configured port (default `3000`)  
-3. Expose `http://localhost:3000/health` for health checks  
-
-### Custom port
-
-```bash
-PORT=8080 DOCS_DIR=... GEMINI_API_KEY=... pnpm run dev
-```
-
-### Common errors
-
-| Symptom                                            | Possible cause                                         |
-|----------------------------------------------------|--------------------------------------------------------|
-| `Error: DOCS_DIR environment variable is required` | `DOCS_DIR` not set                                    |
-| `GEMINI_API_KEY is required`                       | Using default provider without a Gemini key           |
-| `OPENROUTER_API_KEY is required`                   | `LLM_PROVIDER=openrouter` but OpenRouter key not set  |
-| Requests hang or time out                          | Invalid API key or upstream LLM endpoint unreachable  |
+1. Scan `DOCS_DIR` and build an index (directory tree + exported symbols + markdown summaries)
+2. Start listening on the configured port (default `3000`)
 
 ---
 
 ## HTTP API
 
-`POST /api/ask` — ask questions about your codebase and receive answers over SSE.  
-`GET /health` — returns `{ "status": "ok" }` for health checks.
-
 ### POST /api/ask
 
 Stream answers via Server-Sent Events (SSE).
 
-**Request body**
+**Request**
 
-```json
-{ "question": "How is the auth middleware implemented?" }
+```bash
+curl -N -X POST http://localhost:3000/api/ask \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer your_api_key' \
+  -d '{"question": "How is the auth middleware implemented?"}'
 ```
 
 **SSE events**
 
-| event         | data                                | Description                     |
-|---------------|-------------------------------------|---------------------------------|
-| `delta`       | `{"content": "..."}`                | Text delta                      |
-| `tool_call`   | `{"name": "grep", "args": {...}}`   | Tool invocation                 |
-| `tool_result` | `{"name": "grep", "preview": "..."}`| Short summary of tool output    |
-| `done`        | `{}`                                | Stream finished                 |
-| `error`       | `{"message": "..."}`                | Error payload                   |
-
-**Examples**
-
-```bash
-curl -N -X POST http://localhost:4000/api/ask \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer your_api_key' \
-  -d '{"question": "How is the gateway semantic search configured?"}'
-
-curl -N --noproxy '*' -X POST https://api.openclawagent.net/api/ask \
-  -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer your_api_key' \
-  -d '{"question": "How is the gateway semantic search configured?"}'
-```
+| Event         | Data                                 | Description                  |
+|---------------|--------------------------------------|------------------------------|
+| `delta`       | `{"content": "..."}`                 | Text delta                   |
+| `tool_call`   | `{"name": "grep", "args": {...}}`    | Tool invocation              |
+| `tool_result` | `{"name": "grep", "preview": "..."}` | Short summary of tool output |
+| `done`        | `{}`                                 | Stream finished              |
+| `error`       | `{"message": "..."}`                 | Error payload                |
 
 ### GET /health
-
-Health check endpoint returning:
 
 ```json
 { "status": "ok" }
@@ -157,23 +148,37 @@ Health check endpoint returning:
 
 ---
 
-## How it works
+## How It Works
 
-```text
-startup → scan DOCS_DIR → build index (directory tree + file summaries with exported symbols)
+```
+startup → scan DOCS_DIR → build index (directory tree + file summaries + exported symbols)
                                 ↓
-user question → [LLM + index] plan search → grep/read_file → not enough? → search again
-                                                         ↓ enough
-                                                    stream answer (with code + file paths)
+user question → [LLM + index] → plan search → grep/read_file → not enough? → search again
+                                                            ↓ enough
+                                                       stream answer (with code refs + file paths)
 ```
 
 ### What gets indexed
 
-- **TS/JS files**: extract all exported functions, classes, interfaces, types, and constants
-- **Markdown files**: extract titles (`# ...`) and a short excerpt
+- **TS/JS files**: exported functions, classes, interfaces, types, and constants
+- **Markdown files**: titles and short excerpts
 - **Directory tree**: full project structure
 
 ### Built-in tools
 
-- **`grep`**: keyword/regex search across the indexed codebase (returns matching lines, capped)
+- **`grep`**: keyword/regex search across the codebase (max 50 matches)
 - **`read_file`**: read file content with optional line ranges
+
+---
+
+## Development
+
+```bash
+npm run dev          # Start HTTP server with tsx (auto-loads .env)
+npm run cli          # Run TUI locally with tsx
+npm run build        # Compile TypeScript to dist/
+```
+
+## License
+
+[MIT](LICENSE)
