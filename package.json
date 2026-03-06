@@ -1,17 +1,49 @@
 {
-  "name": "docs-qa-api",
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "tsx src/server.ts"
+  "name": "docs-qa-agent",
+  "version": "0.2.0",
+  "description": "LLM-powered codebase Q&A agent with interactive TUI — index your project and ask questions via CLI or HTTP API",
+  "keywords": [
+    "llm",
+    "codebase",
+    "qa",
+    "agent",
+    "cli",
+    "tui",
+    "code-search",
+    "gemini",
+    "openrouter",
+    "sse",
+    "tool-calling"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropic-lab/docs-qa-agent"
   },
+  "type": "module",
+  "bin": {
+    "docs-qa-agent": "./bin/docs-qa-agent.mjs"
+  },
+  "scripts": {
+    "dev": "tsx src/server.ts",
+    "cli": "tsx src/cli/index.ts",
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md"
+  ],
   "dependencies": {
+    "@clack/prompts": "^1.1.0",
     "@google/genai": "^1.0.0",
     "@hono/node-server": "^1.0.0",
     "dotenv": "^17.3.1",
     "glob": "^11.0.0",
     "hono": "^4.0.0",
-    "openai": "^4.0.0"
+    "openai": "^4.0.0",
+    "picocolors": "^1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
